@@ -401,7 +401,7 @@ def main() -> int:
             if a:
                 tool_finding["analyses"][v] = a
                 if a.get("malware") or a.get("critical"):
-                    any_malware = any_malware or bool(a.get("malware"))
+                    any_malware = any_malware or bool(a.get("malware")) or bool(a.get("critical"))
         # Proxy coverage (e.g. semgrep for opengrep) is reported, never build-failing.
         if t.resolved_proxy_purl:
             pa = _match_analysis(t.analyses, t.resolved_proxy_purl)
