@@ -134,7 +134,7 @@ jobs:
 
           title="Core tool version drift detected"
           existing="$(gh issue list --label core-tool-drift --state open \
-            --json number --jq '.[0].number' 2>/dev/null || true)"
+            --json number --jq '.[0].number // empty' 2>/dev/null || true)"
 
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body-file core-tools-report.md
