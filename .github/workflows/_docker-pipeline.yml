@@ -56,6 +56,11 @@ on:
         type: string
         required: false
         default: "dev"
+      ref:
+        description: "Git ref to check out (e.g. refs/tags/v2.0.3). Empty checks out the caller's default ref — used by the publish workflow to build from the resolved release tag on workflow_dispatch."
+        type: string
+        required: false
+        default: ""
     secrets:
       DOCKERHUB_USERNAME:
         required: false
@@ -71,6 +76,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: 🔨 Set up Docker Buildx
