@@ -351,8 +351,18 @@ class TrivyScanner(BaseConnector):
             if scan_paths:
                 logger.info(f"Restricting Trivy scan to {len(scan_paths)} changed directory(ies)")
         
-        # If no changed files or no valid paths, scan entire workspace
+        # If no changed files or no valid paths, scan entire workspace -- unless
+        # the user asked for a changed-files scope. Widening an empty scope back
+        # out to the whole repository is the exact behaviour this scoping exists
+        # to prevent, and unlike the other scanners this one never goes through
+        # get_scan_targets(), so it has to make the decision itself.
         if not scan_paths:
+            if self._changed_files_scope_requested():
+                logger.info(
+                    "Trivy vulnerability scan skipped: a changed-files scope was requested and "
+                    "resolved to no scannable paths, so the whole workspace is not scanned"
+                )
+                return results
             scan_paths = [workspace_path]
         
         for scan_path in scan_paths:

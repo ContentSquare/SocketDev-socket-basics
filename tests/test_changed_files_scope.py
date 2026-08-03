@@ -5,6 +5,7 @@ honor ``changed_files`` so PRs report only on what the PR changed, instead of
 re-scanning the whole repository.
 """
 
+import json
 import logging
 import os
 import subprocess
@@ -546,3 +547,93 @@ class TestConnectorsHonorTheResolvedScope:
         scanner = self._scanner(pr_repo, changed_files=[], scope_requested=False)
         scanner.scan()
         assert called == ["staged"]
+
+
+class TestTrivyVulnScanHonorsTheResolvedScope:
+    """Trivy's filesystem vulnerability scan never calls get_scan_targets().
+
+    Every other connector inherits the empty-scope behaviour from
+    ``Config.get_scan_targets()``. This one builds its own path list from
+    ``changed_files`` and falls back to the whole workspace when that list is
+    empty, so declining the staged-file substitution is not enough on its own:
+    the workspace fallback has to be declined too, or an unresolvable scope
+    still turns into a full-repository scan.
+    """
+
+    def _scanner(self, tmp_path, changed_files, scope_requested):
+        from socket_basics.core.connector.trivy.trivy import TrivyScanner
+
+        values = {
+            "trivy_vuln_enabled": True,
+            "changed_files": changed_files,
+            "changed_files_scope_requested": scope_requested,
+        }
+        config = SimpleNamespace(workspace=tmp_path, _config=values)
+        config.get = lambda key, default=None: values.get(key, default)
+        scanner = TrivyScanner.__new__(TrivyScanner)
+        scanner.config = config
+        return scanner
+
+    def _record_trivy_paths(self, monkeypatch):
+        """Capture the path argument of every trivy invocation."""
+        scanned = []
+
+        def fake_run(cmd, *args, **kwargs):
+            scanned.append(cmd[-1])
+            # Write the JSON Trivy would have written to --output.
+            out_index = cmd.index('--output') + 1
+            with open(cmd[out_index], 'w') as fh:
+                json.dump({"Results": []}, fh)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(
+            "socket_basics.core.connector.trivy.trivy.subprocess.run", fake_run
+        )
+        return scanned
+
+    def test_unresolvable_scope_does_not_widen_to_the_whole_workspace(
+        self, tmp_path, monkeypatch
+    ):
+        scanned = self._record_trivy_paths(monkeypatch)
+        scanner = self._scanner(tmp_path, changed_files=[], scope_requested=True)
+
+        assert scanner.scan_vulnerabilities() == {}
+        assert scanned == []
+
+    def test_scope_whose_paths_all_vanished_does_not_widen_either(
+        self, tmp_path, monkeypatch
+    ):
+        # A delete-only PR: the scope resolved to files, but none of them exist
+        # in the checkout any more, so no directory survives resolution.
+        scanned = self._record_trivy_paths(monkeypatch)
+        scanner = self._scanner(
+            tmp_path, changed_files=["gone/removed.py"], scope_requested=True
+        )
+
+        assert scanner.scan_vulnerabilities() == {}
+        assert scanned == []
+
+    def test_resolved_scope_still_scans_only_the_changed_directories(
+        self, tmp_path, monkeypatch
+    ):
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "requirements.txt").write_text("requests==2.0.0\n")
+        scanned = self._record_trivy_paths(monkeypatch)
+        scanner = self._scanner(
+            tmp_path, changed_files=["pkg/requirements.txt"], scope_requested=True
+        )
+
+        scanner.scan_vulnerabilities()
+        assert scanned == [str(tmp_path / "pkg")]
+
+    def test_whole_workspace_is_still_scanned_when_no_scope_was_requested(
+        self, tmp_path, monkeypatch
+    ):
+        scanned = self._record_trivy_paths(monkeypatch)
+        monkeypatch.setattr(
+            "socket_basics.core.config._detect_git_changed_files", lambda *a, **k: []
+        )
+        scanner = self._scanner(tmp_path, changed_files=[], scope_requested=False)
+
+        scanner.scan_vulnerabilities()
+        assert scanned == [str(tmp_path)]

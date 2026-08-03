@@ -33,7 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   warns that the scanners are being skipped. All of these previously returned an
   empty list in complete silence.
 - TruffleHog and Trivy no longer substitute their own staged-file scope when an
-  explicit `changed_files` request resolved to nothing.
+  explicit `changed_files` request resolved to nothing. Trivy's filesystem
+  vulnerability scan also stops widening an empty scope back out to the whole
+  workspace; it is the one scanner that builds its own path list instead of
+  going through `get_scan_targets()`, so it needed the check twice.
 
 ## [2.2.1] - 2026-07-30
 
