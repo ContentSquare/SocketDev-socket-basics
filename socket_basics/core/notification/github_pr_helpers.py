@@ -85,6 +85,34 @@ def wrap_pr_comment_section(
 # Configuration Helper
 # ============================================================================
 
+def coerce_bool(value: Any, default: bool) -> bool:
+    """Coerce a config value to a bool, tolerating the string forms.
+
+    Flags reach us as real booleans from the environment loader, but a Socket
+    dashboard config can supply them as strings. ``bool("false")`` is ``True``,
+    so a plain cast would silently turn a disabled flag back on.
+
+    Args:
+        value: Raw config value (bool, string, None, ...)
+        default: Value to use when nothing usable was provided
+
+    Returns:
+        The resolved boolean
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ('true', '1', 'yes', 'on'):
+            return True
+        if normalized in ('false', '0', 'no', 'off'):
+            return False
+        return default
+    return bool(value)
+
+
 def get_feature_flags(config) -> Dict[str, Any]:
     """Extract PR comment feature flags from config object.
 
@@ -99,6 +127,7 @@ def get_feature_flags(config) -> Dict[str, Any]:
             'enable_links': True,
             'enable_collapse': True,
             'collapse_non_critical': True,
+            'collapse_all': False,
             'enable_code_fencing': True,
             'show_rule_names': True,
             'repository': '',
@@ -107,11 +136,12 @@ def get_feature_flags(config) -> Dict[str, Any]:
         }
 
     return {
-        'enable_links': config.get('pr_comment_links_enabled', True),
-        'enable_collapse': config.get('pr_comment_collapse_enabled', True),
-        'collapse_non_critical': config.get('pr_comment_collapse_non_critical', True),
-        'enable_code_fencing': config.get('pr_comment_code_fencing_enabled', True),
-        'show_rule_names': config.get('pr_comment_show_rule_names', True),
+        'enable_links': coerce_bool(config.get('pr_comment_links_enabled'), True),
+        'enable_collapse': coerce_bool(config.get('pr_comment_collapse_enabled'), True),
+        'collapse_non_critical': coerce_bool(config.get('pr_comment_collapse_non_critical'), True),
+        'collapse_all': coerce_bool(config.get('pr_comment_collapse_all'), False),
+        'enable_code_fencing': coerce_bool(config.get('pr_comment_code_fencing_enabled'), True),
+        'show_rule_names': coerce_bool(config.get('pr_comment_show_rule_names'), True),
         'repository': config.repo if hasattr(config, 'repo') else '',
         'commit_hash': config.commit_hash if hasattr(config, 'commit_hash') else '',
         'full_scan_url': config.get('full_scan_html_url') if config else None

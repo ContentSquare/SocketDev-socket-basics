@@ -90,7 +90,17 @@ pr_comment_collapse_enabled: 'false'
 # Keep collapsible but expand everything
 pr_comment_collapse_enabled: 'true'
 pr_comment_collapse_non_critical: 'false'
+
+# Keep collapsible and collapse everything, critical included
+pr_comment_collapse_enabled: 'true'
+pr_comment_collapse_all: 'true'
 ```
+
+> [!NOTE]
+> `pr_comment_collapse_non_critical` deliberately leaves critical findings
+> expanded, so a single critical finding always opens the comment. Set
+> `pr_comment_collapse_all: 'true'` when you want the comment to stay small no
+> matter what it finds. It overrides `pr_comment_collapse_non_critical`.
 
 ---
 
@@ -291,7 +301,47 @@ The logo is a 32px PNG rendered at 24x24 for retina-crisp display, with a transp
 
 ---
 
-### 9. All-Clear Comment Updates
+### 9. Turning the Comment Off (`pr_comment_enabled`)
+
+**Default:** `true`
+
+Set `pr_comment_enabled: 'false'` to run the scan without saying anything on the
+PR. This is for teams who want to review finding quality in the Socket dashboard
+first, without every PR growing a comment that developers have to scroll past.
+
+```yaml
+- uses: SocketDev/socket-basics@v2
+  with:
+    socket_security_api_key: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+    github_token: ${{ secrets.GITHUB_TOKEN }}
+    pr_comment_enabled: 'false'
+```
+
+**What still happens when the comment is off:**
+
+| Behavior | Still happens? |
+|----------|----------------|
+| Scanners run (SAST, secrets, containers) | ✅ Yes |
+| Findings uploaded to the Socket dashboard | ✅ Yes |
+| `.socket.facts.json` written | ✅ Yes |
+| Job fails on high/critical findings | ✅ Yes |
+| Other notifiers (Slack, Jira, webhook, ...) | ✅ Yes |
+| Severity labels added to the PR | ✅ Yes, unless `pr_labels_enabled: 'false'` |
+| Comment posted or updated | ❌ No |
+
+Notifiers are the very last thing the run does — the scan finishes and the
+findings are uploaded to Socket before any comment would be posted — so turning
+the comment off cannot turn the dashboard off. Labels are a separate switch
+(`pr_labels_enabled`) so you can keep or drop them independently.
+
+> [!TIP]
+> If you want to keep the comment but make it quieter, use
+> `pr_comment_collapse_all: 'true'` instead. That collapses every section,
+> including critical ones, so the comment is one line until someone opens it.
+
+---
+
+### 10. All-Clear Comment Updates
 
 When a later Socket Basics run no longer has active findings for a previously-reported scanner section, the existing PR comment section is updated in place instead of being left stale or deleted.
 
@@ -313,9 +363,11 @@ When a later Socket Basics run no longer has active findings for a previously-re
 
 | Option | Default | Type | Description |
 |--------|---------|------|-------------|
+| `pr_comment_enabled` | `true` | boolean | Post/update the findings comment on the PR |
 | `pr_comment_links_enabled` | `true` | boolean | Enable clickable file/line links |
 | `pr_comment_collapse_enabled` | `true` | boolean | Enable collapsible sections |
-| `pr_comment_collapse_non_critical` | `true` | boolean | Auto-collapse non-critical findings |
+| `pr_comment_collapse_non_critical` | `true` | boolean | Auto-collapse non-critical findings (critical stays expanded) |
+| `pr_comment_collapse_all` | `false` | boolean | Collapse every section, critical included |
 | `pr_comment_code_fencing_enabled` | `true` | boolean | Enable syntax highlighting |
 | `pr_comment_show_rule_names` | `true` | boolean | Show explicit rule names |
 | `pr_labels_enabled` | `true` | boolean | Add severity-based labels to PRs |
@@ -393,6 +445,21 @@ pr_comment_collapse_non_critical: 'true'
 pr_label_critical: 'security'
 pr_label_high: 'security'
 pr_label_medium: 'security'
+```
+
+### Evaluation / Trial (Dashboard Only)
+
+Review findings in the Socket dashboard without putting anything on the PR:
+```yaml
+pr_comment_enabled: 'false'
+pr_labels_enabled: 'false'
+```
+
+### Quiet Comment (Everything Collapsed)
+
+Keep a single collapsed comment even when there are critical findings:
+```yaml
+pr_comment_collapse_all: 'true'
 ```
 
 ---

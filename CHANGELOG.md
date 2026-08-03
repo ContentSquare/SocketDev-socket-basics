@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `pr_comment_enabled` (default `true`). Set it to `false` to run the scan
+  without posting or updating the pull request comment. Scanning, the Socket
+  dashboard upload, `.socket.facts.json`, the high/critical job failure, and the
+  other notifiers are all unaffected; severity labels stay under the separate
+  `pr_labels_enabled` switch.
+- Added `pr_comment_collapse_all` (default `false`), which collapses every
+  findings section including critical ones. Previously
+  `pr_comment_collapse_non_critical` always left critical findings expanded, so
+  a single critical finding forced the whole comment open.
+
+### Fixed
+
+- PR comment feature flags now accept string values (`'false'`, `'0'`, `'no'`,
+  `'off'`) as well as booleans. A Socket dashboard config that supplied a flag
+  as a string previously read as enabled, because `bool("false")` is `True`.
+
 ## [2.2.1] - 2026-07-30
 
 ### Fixed

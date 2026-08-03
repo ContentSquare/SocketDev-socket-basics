@@ -356,3 +356,72 @@ class TestEmptyInputs:
         results = format_notifications([], config=config)
         assert len(results) == 1
         assert "No reachability issues found" in results[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# pr_comment_collapse_all: keep every section collapsed, critical included
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def config_collapse_all():
+    return make_mock_config(collapse_all=True)
+
+
+class TestCollapseAll:
+    """`pr_comment_collapse_all` is the only way to collapse critical findings.
+
+    `pr_comment_collapse_non_critical` deliberately leaves critical sections
+    expanded, so before this flag existed a critical finding always forced the
+    comment open.
+    """
+
+    def test_opengrep_critical_section_is_expanded_by_default(self, config):
+        from socket_basics.core.connector.opengrep.github_pr import format_notifications
+        results = format_notifications(OPENGREP_FIXTURES, config=config)
+        js_content = next(r["content"] for r in results if "JavaScript" in r["title"])
+        assert "<details open>" in js_content
+
+    def test_opengrep_collapses_critical_section_when_enabled(self, config_collapse_all):
+        from socket_basics.core.connector.opengrep.github_pr import format_notifications
+        results = format_notifications(OPENGREP_FIXTURES, config=config_collapse_all)
+        js_content = next(r["content"] for r in results if "JavaScript" in r["title"])
+        assert "<details open>" not in js_content
+        # Sections are still present, just closed.
+        assert "<details>" in js_content
+
+    def test_tier1_critical_section_is_expanded_by_default(self, config):
+        from socket_basics.core.connector.socket_tier1.github_pr import format_notifications
+        content = format_notifications(TIER1_FIXTURES, config=config)[0]["content"]
+        assert "<details open>" in content
+
+    def test_tier1_collapses_critical_section_when_enabled(self, config_collapse_all):
+        from socket_basics.core.connector.socket_tier1.github_pr import format_notifications
+        content = format_notifications(TIER1_FIXTURES, config=config_collapse_all)[0]["content"]
+        assert "<details open>" not in content
+        assert "<details>" in content
+
+
+class TestFeatureFlagCoercion:
+    """Dashboard-sourced config can deliver flags as strings, not booleans."""
+
+    def test_string_true_enables_collapse_all(self):
+        from socket_basics.core.notification.github_pr_helpers import get_feature_flags
+        flags = get_feature_flags(make_mock_config(collapse_all="true"))
+        assert flags["collapse_all"] is True
+
+    def test_string_false_does_not_enable_collapse_all(self):
+        from socket_basics.core.notification.github_pr_helpers import get_feature_flags
+        flags = get_feature_flags(make_mock_config(collapse_all="false"))
+        assert flags["collapse_all"] is False
+
+    def test_string_false_disables_links(self):
+        from socket_basics.core.notification.github_pr_helpers import get_feature_flags
+        config = make_mock_config()
+        config["pr_comment_links_enabled"] = "false"
+        assert get_feature_flags(config)["enable_links"] is False
+
+    def test_missing_config_keeps_documented_defaults(self):
+        from socket_basics.core.notification.github_pr_helpers import get_feature_flags
+        flags = get_feature_flags(None)
+        assert flags["collapse_all"] is False
+        assert flags["collapse_non_critical"] is True
