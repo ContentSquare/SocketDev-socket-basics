@@ -332,8 +332,9 @@ class TestPrBaseResolution:
     def test_uses_base_sha_from_event_payload(self, pr_repo, tmp_path, monkeypatch):
         """GITHUB_BASE_REF is only set on pull_request triggers.
 
-        On an issue_comment or workflow_dispatch run the PR base is only in the
-        event payload, where base.sha is an exact commit.
+        On a pull_request_review or pull_request_review_comment run the PR base
+        is only in the event payload, where base.sha is an exact commit that
+        does not need a remote-tracking branch to resolve.
         """
         monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
         base_sha = _git(pr_repo, "rev-parse", "main").stdout.strip()
@@ -369,6 +370,59 @@ class TestPrBaseResolution:
         monkeypatch.setenv("GITHUB_BASE_REF", "main")
         files = _detect_git_changed_files(str(cloned_pr_repo["deep"]), mode="pr")
         assert files == ["feat.py"]
+
+    def test_issue_comment_payload_yields_no_base_and_says_why(
+        self, pr_repo, tmp_path, monkeypatch, caplog
+    ):
+        """issue_comment is the one PR trigger the payload fallback cannot serve.
+
+        Its payload has no top-level pull_request. It has issue.pull_request,
+        which is a set of URLs with no base ref or sha in it, so there is
+        nothing to diff against without a GitHub API call. The run must say
+        that rather than resolve to nothing and look like an empty diff.
+        """
+        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+        _write_event(
+            tmp_path,
+            monkeypatch,
+            {
+                "action": "created",
+                "issue": {
+                    "number": 98,
+                    "pull_request": {
+                        "url": "https://api.github.com/repos/o/r/pulls/98",
+                        "html_url": "https://github.com/o/r/pull/98",
+                    },
+                },
+            },
+        )
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            files = _detect_git_changed_files(str(pr_repo), mode="pr")
+
+        assert files == []
+        assert "issue_comment" in caplog.text
+        assert "GITHUB_BASE_REF" in caplog.text
+
+    def test_plain_issue_comment_gets_the_generic_warning(
+        self, pr_repo, tmp_path, monkeypatch, caplog
+    ):
+        """A comment on a real issue is not a pull request at all.
+
+        issue_comment fires for both, and only issue.pull_request tells them
+        apart, so the PR-specific advice must not be given for an issue.
+        """
+        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+        _write_event(
+            tmp_path, monkeypatch, {"action": "created", "issue": {"number": 12}}
+        )
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            files = _detect_git_changed_files(str(pr_repo), mode="pr")
+
+        assert files == []
+        assert "no pull request base was found" in caplog.text
+        assert "issue_comment" not in caplog.text
 
 
 class TestScopeFailuresAreLoud:

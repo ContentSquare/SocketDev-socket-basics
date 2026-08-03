@@ -139,6 +139,29 @@ not a git repository, git refused to read the repository, no PR base at all) and
 the scanners are skipped. **A scope request that cannot be honored is never
 turned into a whole-repository scan, and it is never silent.**
 
+Steps 2 and 3 cover the triggers whose payload carries a top-level
+`pull_request`: `pull_request`, `pull_request_target`, `pull_request_review`
+and `pull_request_review_comment`. They do **not** cover `issue_comment`. That
+payload has `issue.pull_request` instead, which is a set of URLs with no base
+ref or sha in it, so there is nothing to diff against without a GitHub API
+call. If you run the scan from a comment trigger, look the base up in the
+workflow and pass it in yourself:
+
+```yaml
+- id: prbase
+  run: echo "ref=$(gh pr view ${{ github.event.issue.number }} --json baseRefName -q .baseRefName)" >> "$GITHUB_OUTPUT"
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+- uses: SocketDev/socket-basics@v2
+  env:
+    GITHUB_BASE_REF: ${{ steps.prbase.outputs.ref }}
+  with:
+    changed_files: 'auto'
+```
+
+Otherwise the run warns that it was triggered by a comment on a pull request
+and that it cannot work the base out on its own.
+
 **`scan_all` outranks `changed_files`.** If `scan_all` is set — from
 `INPUT_SCAN_ALL`, a JSON config, or a Socket dashboard config — the whole
 workspace is scanned and the changed-files scope is discarded. The run logs a

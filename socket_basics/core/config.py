@@ -1737,11 +1737,18 @@ def _pr_base_candidates(base_ref: str | None = None) -> List[str]:
     """Every ref we know of that could be the base of the current PR.
 
     ``GITHUB_BASE_REF`` is only set for ``pull_request`` and
-    ``pull_request_target`` events. A workflow triggered by ``issue_comment``,
-    ``workflow_dispatch``, or a re-run has a pull request but no
-    ``GITHUB_BASE_REF``, so the event payload is checked as well. The payload
-    also carries ``base.sha``, which is an exact commit and therefore does not
-    depend on a remote-tracking branch existing in the checkout.
+    ``pull_request_target`` events, so the event payload is checked as well.
+    That covers the triggers whose payload carries a top-level ``pull_request``
+    object -- ``pull_request_review``, ``pull_request_review_comment`` and the
+    two above -- and it is worth checking even when ``GITHUB_BASE_REF`` is set
+    because ``base.sha`` is an exact commit and so does not depend on a
+    remote-tracking branch existing in the checkout.
+
+    It does **not** cover ``issue_comment``. That payload has no top-level
+    ``pull_request``; it has ``issue.pull_request``, which is a bag of URLs
+    with no ref or sha in it, and working the base out from there would take a
+    GitHub API call. ``_warn_no_base`` recognises that shape and says so rather
+    than letting the run look like an empty diff.
     """
     candidates: List[str] = []
 
@@ -1760,6 +1767,21 @@ def _pr_base_candidates(base_ref: str | None = None) -> List[str]:
             _add(base.get('ref'))
 
     return candidates
+
+
+def _event_is_comment_on_pull_request() -> bool:
+    """Was this run triggered by a comment on a pull request?
+
+    ``issue_comment`` fires for both issues and pull requests, and the only
+    thing distinguishing the two is the presence of ``issue.pull_request``.
+    There is a pull request, but nothing in the payload says what it is based
+    on, so the scope cannot be resolved from the environment alone.
+    """
+    event = _read_github_event()
+    if isinstance(event.get('pull_request'), dict):
+        return False
+    issue = event.get('issue')
+    return isinstance(issue, dict) and isinstance(issue.get('pull_request'), dict)
 
 
 def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit: str | None = None, base_ref: str | None = None) -> List[str]:
@@ -1881,6 +1903,18 @@ def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit:
                     )
                     return
                 if not refs:
+                    if _event_is_comment_on_pull_request():
+                        log.warning(
+                            "Cannot scope the scan to changed files: no pull request base was "
+                            "found. This run was triggered by a comment on a pull request "
+                            "(issue_comment), which sets no GITHUB_BASE_REF and whose event "
+                            "payload only carries github.event.issue.pull_request -- a set of "
+                            "URLs with no base ref or sha in it. Look the base up in the "
+                            "workflow (`gh pr view <number> --json baseRefName`) and pass it to "
+                            "the scan step as GITHUB_BASE_REF, or use "
+                            "changed_files: 'current-commit'."
+                        )
+                        return
                     log.warning(
                         "Cannot scope the scan to changed files: no pull request base was found. "
                         "GITHUB_BASE_REF is unset and the GitHub event payload has no "

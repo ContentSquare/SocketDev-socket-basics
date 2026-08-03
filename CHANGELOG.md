@@ -25,7 +25,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pull request base resolution now falls back to `pull_request.base.sha` and
   `pull_request.base.ref` from the GitHub event payload when `GITHUB_BASE_REF`
   is unset, which is the case on any trigger other than `pull_request` and
-  `pull_request_target`.
+  `pull_request_target`. That covers `pull_request_review` and
+  `pull_request_review_comment`, whose payloads carry a top-level
+  `pull_request`. It cannot cover `issue_comment`, whose payload only has
+  `issue.pull_request` (URLs, no base ref or sha), so that trigger now gets a
+  warning naming itself and saying how to supply the base instead.
 - A scope request that cannot be honored now says why. Shallow checkouts
   (naming `fetch-depth: 0`), a workspace that is not a git repository, git
   refusing to read the repository (container ownership mismatch), and a missing
