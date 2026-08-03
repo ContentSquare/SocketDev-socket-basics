@@ -37,7 +37,7 @@ class GithubPRNotifier(BaseNotifier):
 
     def notify(self, facts: Dict[str, Any]) -> None:
         notifications = facts.get('notifications', []) or []
-        labels_enabled = self.config.get('pr_labels_enabled', True)
+        labels_enabled = coerce_bool(self.config.get('pr_labels_enabled'), True)
         comment_enabled = coerce_bool(self.config.get('pr_comment_enabled'), True)
 
         if not isinstance(notifications, list):

@@ -449,6 +449,28 @@ def test_notify_honors_string_false_from_dashboard_config(monkeypatch):
     assert calls['posted'] == []
 
 
+def test_notify_honors_string_false_for_labels(monkeypatch):
+    """pr_labels_enabled needs the same string handling as pr_comment_enabled."""
+    notifier, calls = _suppression_notifier(
+        monkeypatch, pr_comment_enabled='false', pr_labels_enabled='false'
+    )
+
+    notifier.notify({'notifications': [_FINDING], 'components': []})
+
+    assert calls['posted'] == []
+    assert calls['labels'] == []
+
+
+def test_notify_string_false_labels_are_skipped_on_the_normal_path(monkeypatch):
+    """Not just the suppression branch -- the ordinary posting path too."""
+    notifier, calls = _suppression_notifier(monkeypatch, pr_labels_enabled='false')
+
+    notifier.notify({'notifications': [_FINDING], 'components': []})
+
+    assert len(calls['posted']) == 1
+    assert calls['labels'] == []
+
+
 def test_notify_leaves_facts_untouched_when_pr_comment_disabled(monkeypatch):
     """Suppression is comment-only: the uploaded facts payload is not altered."""
     notifier, _calls = _suppression_notifier(monkeypatch, pr_comment_enabled=False)

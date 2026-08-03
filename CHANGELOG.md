@@ -22,9 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- PR comment feature flags now accept string values (`'false'`, `'0'`, `'no'`,
-  `'off'`) as well as booleans. A Socket dashboard config that supplied a flag
-  as a string previously read as enabled, because `bool("false")` is `True`.
+- PR comment feature flags, including `pr_labels_enabled`, now accept string
+  values (`'false'`, `'0'`, `'no'`, `'off'`) as well as booleans. A Socket
+  dashboard config that supplied a flag as a string previously read as enabled,
+  because `bool("false")` is `True`.
 
 ## [2.2.1] - 2026-07-30
 
