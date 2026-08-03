@@ -114,9 +114,13 @@ def _config_args(workspace, changed_files):
 def pr_repo(tmp_path, monkeypatch):
     """A git repo with a 'main' base and a 'feature' branch ahead of it."""
     # _detect_git_changed_files prefers GITHUB_WORKSPACE; clear it so the
-    # explicit workspace path is used.
+    # explicit workspace path is used. GITHUB_EVENT_PATH has to go too: when
+    # these tests run inside a pull request, the ambient event payload names a
+    # real base ref, and PR base resolution would find it and diff against it
+    # instead of doing what the test asked for.
     monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
     monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
 
     _git(tmp_path, "init", "-b", "main")
     (tmp_path / "base.py").write_text("base = 1")
@@ -161,6 +165,7 @@ class TestDetectGitChangedFiles:
 
     def test_delete_only_pr_config_creation_keeps_empty_scope(self, tmp_path, monkeypatch):
         monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+        monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
         monkeypatch.setenv("GITHUB_BASE_REF", "main")
 
         _git(tmp_path, "init", "-b", "main")
