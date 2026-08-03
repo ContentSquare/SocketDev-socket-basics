@@ -503,7 +503,7 @@ class TestScanAllOverrideIsLoud:
         with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
             cfg.get_scan_targets()
 
-        assert "scan_all is enabled" in caplog.text
+        assert "scan_all" in caplog.text
         assert "changed-files scope" in caplog.text
 
     def test_scan_all_warns_for_a_scope_that_resolved_to_nothing(self, tmp_path, caplog):
@@ -515,7 +515,7 @@ class TestScanAllOverrideIsLoud:
         with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
             cfg.get_scan_targets()
 
-        assert "scan_all is enabled" in caplog.text
+        assert "scan_all" in caplog.text
 
     def test_scan_all_alone_does_not_warn(self, tmp_path, caplog):
         cfg = _make_config(tmp_path, scan_all=True)
@@ -523,7 +523,25 @@ class TestScanAllOverrideIsLoud:
         with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
             assert cfg.get_scan_targets() == [str(tmp_path)]
 
-        assert "scan_all is enabled" not in caplog.text
+        assert "scan_all" not in caplog.text
+
+    def test_warning_says_the_run_will_be_a_mix_not_a_clean_override(self, tmp_path, caplog):
+        """Only get_scan_targets() callers widen; the others keep the scope.
+
+        TruffleHog and Trivy read ``changed_files`` off the config themselves,
+        so ``scan_all`` does not actually reach them. Claiming the scope is
+        simply "ignored" would send someone looking for a full-repo secret scan
+        that never happens.
+        """
+        (tmp_path / "a.py").write_text("x = 1")
+        cfg = _make_config(tmp_path, scan_all=True, changed_files=["a.py"])
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            cfg.get_scan_targets()
+
+        assert "mix" in caplog.text
+        assert "secret and container scanners" in caplog.text
+        assert "stay scoped" in caplog.text
 
 
 class TestResolveChangedFilesRequest:
@@ -614,13 +632,14 @@ class TestTrivyVulnScanHonorsTheResolvedScope:
     still turns into a full-repository scan.
     """
 
-    def _scanner(self, tmp_path, changed_files, scope_requested):
+    def _scanner(self, tmp_path, changed_files, scope_requested, scan_all=False):
         from socket_basics.core.connector.trivy.trivy import TrivyScanner
 
         values = {
             "trivy_vuln_enabled": True,
             "changed_files": changed_files,
             "changed_files_scope_requested": scope_requested,
+            "scan_all": scan_all,
         }
         config = SimpleNamespace(workspace=tmp_path, _config=values)
         config.get = lambda key, default=None: values.get(key, default)
@@ -688,6 +707,20 @@ class TestTrivyVulnScanHonorsTheResolvedScope:
             "socket_basics.core.config._detect_git_changed_files", lambda *a, **k: []
         )
         scanner = self._scanner(tmp_path, changed_files=[], scope_requested=False)
+
+        scanner.scan_vulnerabilities()
+        assert scanned == [str(tmp_path)]
+
+    def test_scan_all_still_gets_the_whole_workspace(self, tmp_path, monkeypatch):
+        """scan_all is an explicit "scan everything", so it outranks the skip.
+
+        Without this, an unresolvable scope plus scan_all would turn a request
+        to scan everything into scanning nothing.
+        """
+        scanned = self._record_trivy_paths(monkeypatch)
+        scanner = self._scanner(
+            tmp_path, changed_files=[], scope_requested=True, scan_all=True
+        )
 
         scanner.scan_vulnerabilities()
         assert scanned == [str(tmp_path)]

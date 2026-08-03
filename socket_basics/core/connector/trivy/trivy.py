@@ -356,8 +356,11 @@ class TrivyScanner(BaseConnector):
         # out to the whole repository is the exact behaviour this scoping exists
         # to prevent, and unlike the other scanners this one never goes through
         # get_scan_targets(), so it has to make the decision itself.
+        # scan_all is the explicit "scan everything" override, so it still gets
+        # the whole workspace -- skipping there would turn an explicit request
+        # to scan everything into scanning nothing.
         if not scan_paths:
-            if self._changed_files_scope_requested():
+            if self._changed_files_scope_requested() and not self.config.get('scan_all', False):
                 logger.info(
                     "Trivy vulnerability scan skipped: a changed-files scope was requested and "
                     "resolved to no scannable paths, so the whole workspace is not scanned"

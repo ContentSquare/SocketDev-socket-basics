@@ -22,6 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scan_all` still overrides `changed_files`, but now logs a warning naming the
   scope it discarded. It can come from a Socket dashboard config rather than the
   workflow, so discarding the request silently made diff-only mode look broken.
+  The warning also says that the override is partial: only the scanners that ask
+  `get_scan_targets()` for their paths widen, while the secret and container
+  scanners read `changed_files` directly and stay scoped, so setting both
+  produces a mixed run.
 - Pull request base resolution now falls back to `pull_request.base.sha` and
   `pull_request.base.ref` from the GitHub event payload when `GITHUB_BASE_REF`
   is unset, which is the case on any trigger other than `pull_request` and

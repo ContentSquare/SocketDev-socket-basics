@@ -300,11 +300,20 @@ class Config:
                 # workflow template, so the person who set changed_files is not
                 # necessarily the person who set scan_all. Silently discarding
                 # the narrower request is what makes diff-only mode look broken.
+                #
+                # It is only discarded for the scanners that ask this method for
+                # their targets. TruffleHog and Trivy read changed_files off the
+                # config themselves, so they keep the narrow scope, and the run
+                # ends up a mix of the two. Say that plainly -- a warning that
+                # overstates what it does is its own kind of misleading.
                 logging.getLogger(__name__).warning(
-                    "scan_all is enabled, so the whole workspace will be scanned and the "
-                    "requested changed-files scope (%d file(s)) is being ignored. "
-                    "Unset scan_all (INPUT_SCAN_ALL, or the scan_all key in your Socket "
-                    "dashboard/JSON config) to scan only changed files.",
+                    "scan_all and a changed-files scope (%d file(s)) are both set, and they "
+                    "disagree. SAST will scan the whole workspace because scan_all outranks "
+                    "the scope here, while the secret and container scanners read changed_files "
+                    "directly and will stay scoped to those files, so this run will be a mix of "
+                    "the two. Unset scan_all (INPUT_SCAN_ALL, or the scan_all key in your Socket "
+                    "dashboard/JSON config) to scan only changed files, or drop changed_files to "
+                    "scan everything.",
                     len(self.get('changed_files') or []),
                 )
             return [str(self.workspace)]

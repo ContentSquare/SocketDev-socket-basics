@@ -162,11 +162,15 @@ workflow and pass it in yourself:
 Otherwise the run warns that it was triggered by a comment on a pull request
 and that it cannot work the base out on its own.
 
-**`scan_all` outranks `changed_files`.** If `scan_all` is set — from
-`INPUT_SCAN_ALL`, a JSON config, or a Socket dashboard config — the whole
-workspace is scanned and the changed-files scope is discarded. The run logs a
-warning saying so, because `scan_all` often comes from a different place than
-the workflow that asked for diff-only scoping.
+**`scan_all` outranks `changed_files` — but only for some scanners.** If
+`scan_all` is set — from `INPUT_SCAN_ALL`, a JSON config, or a Socket dashboard
+config — SAST scans the whole workspace and the changed-files scope is
+discarded. The secret and container scanners read `changed_files` off the config
+themselves rather than asking for scan targets, so they stay scoped to the
+changed files, and a run with both settings is a mix of the two. The run logs a
+warning saying exactly that, because `scan_all` often comes from a different
+place than the workflow that asked for diff-only scoping. Set one or the other,
+not both.
 
 **Example:**
 ```bash
