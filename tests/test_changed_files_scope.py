@@ -5,13 +5,20 @@ honor ``changed_files`` so PRs report only on what the PR changed, instead of
 re-scanning the whole repository.
 """
 
+import logging
 import os
 import subprocess
 from argparse import Namespace
+from types import SimpleNamespace
 
 import pytest
 
-from socket_basics.core.config import Config, _detect_git_changed_files, create_config_from_args
+from socket_basics.core.config import (
+    Config,
+    _detect_git_changed_files,
+    create_config_from_args,
+    resolve_changed_files_request,
+)
 
 
 def _make_config(workspace, **overrides):
@@ -170,3 +177,367 @@ class TestDetectGitChangedFiles:
 
         assert cfg.get("changed_files") == []
         assert cfg.get_scan_targets() == []
+
+
+# ===========================================================================
+# SURF-1452: the scope request must reach the file walk from every entry
+# point, and a scope it cannot honor must say so in the log.
+# ===========================================================================
+
+
+@pytest.fixture
+def cloned_pr_repo(tmp_path, monkeypatch):
+    """An 'upstream' repo plus a CI-style checkout with an ``origin`` remote.
+
+    ``pr_repo`` has no remote, so ``origin/main`` never exists there and the
+    bare ``main`` fallback always saves it. Real CI checkouts only have the
+    remote-tracking ref, and only when the fetch was deep enough.
+    """
+    monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
+
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    _git(upstream, "init", "-b", "main")
+    (upstream / "base.py").write_text("base = 1")
+    (upstream / "untouched.py").write_text("untouched = 1")
+    _git(upstream, "add", ".")
+    _git(upstream, "commit", "-m", "base")
+    _git(upstream, "checkout", "-b", "feature")
+    (upstream / "feat.py").write_text("feat = 1")
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-m", "feature")
+    _git(upstream, "checkout", "main")
+
+    def checkout(name, depth):
+        ws = tmp_path / name
+        ws.mkdir()
+        _git(ws, "init")
+        _git(ws, "remote", "add", "origin", str(upstream))
+        if depth:
+            _git(ws, "fetch", "--no-tags", f"--depth={depth}", "origin",
+                 "+refs/heads/feature:refs/remotes/origin/feature")
+        else:
+            _git(ws, "fetch", "--no-tags", "origin", "+refs/heads/*:refs/remotes/origin/*")
+        _git(ws, "checkout", "--force", "origin/feature")
+        return ws
+
+    return {
+        "upstream": upstream,
+        "deep": checkout("deep", 0),      # actions/checkout with fetch-depth: 0
+        "shallow": checkout("shallow", 1),  # actions/checkout default
+    }
+
+
+def _write_event(tmp_path, monkeypatch, payload):
+    """Point GITHUB_EVENT_PATH at a pull_request event payload."""
+    import json
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps(payload))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    return event
+
+
+class TestScopeRequestReachesEveryConfigPath:
+    """`changed_files` used to be resolved only in create_config_from_args().
+
+    A Config built any other way -- the env loader, a --config JSON file, a
+    Socket dashboard config -- either ignored the request and scanned the whole
+    repository, or kept the raw string and iterated it character by character.
+    """
+
+    def test_env_only_config_honors_input_changed_files(self, pr_repo, monkeypatch):
+        from socket_basics.core.config import load_config_from_env
+
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(pr_repo))
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+        monkeypatch.setenv("INPUT_CHANGED_FILES", "auto")
+
+        cfg = Config(load_config_from_env())
+
+        assert sorted(cfg.get("changed_files")) == ["base.py", "feat.py"]
+        assert cfg.get_scan_targets() == [str(pr_repo / "base.py"), str(pr_repo / "feat.py")]
+
+    def test_env_only_config_without_request_scans_workspace(self, pr_repo, monkeypatch):
+        from socket_basics.core.config import load_config_from_env
+
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(pr_repo))
+        monkeypatch.delenv("INPUT_CHANGED_FILES", raising=False)
+
+        cfg = Config(load_config_from_env())
+
+        assert cfg.get_scan_targets() == [str(pr_repo)]
+
+    def test_raw_auto_string_is_resolved_not_iterated(self, pr_repo, monkeypatch):
+        """A JSON/dashboard config value of 'auto' must hit git.
+
+        Before, `_resolve_file_targets("auto")` walked the string and looked
+        for files named 'a', 'u', 't', 'o'.
+        """
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+
+        cfg = _make_config(pr_repo, changed_files="auto")
+
+        assert sorted(cfg.get("changed_files")) == ["base.py", "feat.py"]
+        assert cfg.get_scan_targets() == [str(pr_repo / "base.py"), str(pr_repo / "feat.py")]
+
+    def test_raw_comma_list_string_is_split(self, tmp_path):
+        (tmp_path / "a.py").write_text("x = 1")
+        (tmp_path / "b.py").write_text("y = 2")
+        (tmp_path / "c.py").write_text("z = 3")
+
+        cfg = _make_config(tmp_path, changed_files="a.py,b.py")
+
+        assert cfg.get("changed_files") == ["a.py", "b.py"]
+        assert cfg.get_scan_targets() == [str(tmp_path / "a.py"), str(tmp_path / "b.py")]
+
+    def test_already_resolved_list_is_not_re_resolved(self, tmp_path):
+        (tmp_path / "a.py").write_text("x = 1")
+        cfg = _make_config(tmp_path, changed_files=["a.py"])
+        assert cfg.get("changed_files") == ["a.py"]
+
+    def test_empty_request_normalizes_to_empty_list(self, tmp_path):
+        cfg = _make_config(tmp_path, changed_files="")
+        assert cfg.get("changed_files") == []
+        assert cfg.get_scan_targets() == [str(tmp_path)]
+
+    def test_cli_value_overrides_env_value(self, pr_repo, monkeypatch):
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(pr_repo))
+        monkeypatch.setenv("INPUT_CHANGED_FILES", "auto")
+
+        cfg = create_config_from_args(_config_args(pr_repo, "base.py"))
+
+        assert cfg.get("changed_files") == ["base.py"]
+
+    def test_env_value_is_used_when_no_cli_value(self, pr_repo, monkeypatch):
+        monkeypatch.setenv("GITHUB_WORKSPACE", str(pr_repo))
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+        monkeypatch.setenv("INPUT_CHANGED_FILES", "pr")
+
+        cfg = create_config_from_args(_config_args(pr_repo, ""))
+
+        assert sorted(cfg.get("changed_files")) == ["base.py", "feat.py"]
+
+
+class TestPrBaseResolution:
+    """`auto`/`pr` used to consult GITHUB_BASE_REF and nothing else."""
+
+    def test_uses_base_sha_from_event_payload(self, pr_repo, tmp_path, monkeypatch):
+        """GITHUB_BASE_REF is only set on pull_request triggers.
+
+        On an issue_comment or workflow_dispatch run the PR base is only in the
+        event payload, where base.sha is an exact commit.
+        """
+        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+        base_sha = _git(pr_repo, "rev-parse", "main").stdout.strip()
+        _write_event(tmp_path, monkeypatch, {"pull_request": {"base": {"sha": base_sha}}})
+
+        files = _detect_git_changed_files(str(pr_repo), mode="pr")
+
+        assert sorted(files) == ["base.py", "feat.py"]
+
+    def test_uses_base_ref_from_event_payload(self, pr_repo, tmp_path, monkeypatch):
+        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+        _write_event(tmp_path, monkeypatch, {"pull_request": {"base": {"ref": "main"}}})
+
+        files = _detect_git_changed_files(str(pr_repo), mode="pr")
+
+        assert sorted(files) == ["base.py", "feat.py"]
+
+    def test_ignores_event_payload_without_a_pull_request(self, pr_repo, tmp_path, monkeypatch):
+        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+        _write_event(tmp_path, monkeypatch, {"ref": "refs/heads/feature"})
+
+        assert _detect_git_changed_files(str(pr_repo), mode="pr") == []
+
+    def test_survives_an_unreadable_event_payload(self, pr_repo, tmp_path, monkeypatch):
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(tmp_path / "does-not-exist.json"))
+
+        files = _detect_git_changed_files(str(pr_repo), mode="pr")
+
+        assert sorted(files) == ["base.py", "feat.py"]
+
+    def test_deep_checkout_resolves_remote_tracking_base(self, cloned_pr_repo, monkeypatch):
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+        files = _detect_git_changed_files(str(cloned_pr_repo["deep"]), mode="pr")
+        assert files == ["feat.py"]
+
+
+class TestScopeFailuresAreLoud:
+    """A scope that cannot be honored must not resolve to nothing in silence.
+
+    Every one of these used to return [] with no log output at all, which is
+    why "we tried auto, we tried pr, nothing changed" was such a hard report to
+    act on.
+    """
+
+    def test_shallow_checkout_warns_and_names_fetch_depth(self, cloned_pr_repo, monkeypatch, caplog):
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            files = _detect_git_changed_files(str(cloned_pr_repo["shallow"]), mode="pr")
+
+        assert files == []
+        assert "fetch-depth: 0" in caplog.text
+        assert "shallow" in caplog.text.lower()
+
+    def test_missing_pr_base_warns(self, pr_repo, monkeypatch, caplog):
+        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+        monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            files = _detect_git_changed_files(str(pr_repo), mode="pr")
+
+        assert files == []
+        assert "no pull request base was found" in caplog.text
+
+    def test_non_git_workspace_warns(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            files = _detect_git_changed_files(str(tmp_path), mode="pr", base_ref="main")
+
+        assert files == []
+        assert "not a git repository" in caplog.text
+
+    def test_zero_resolution_warns_that_scanners_will_be_skipped(self, pr_repo, monkeypatch, caplog):
+        monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+        monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            files = resolve_changed_files_request("pr", str(pr_repo))
+
+        assert files == []
+        assert "SKIPPED" in caplog.text
+
+    def test_successful_resolution_does_not_warn(self, pr_repo, monkeypatch, caplog):
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            files = resolve_changed_files_request("auto", str(pr_repo))
+
+        assert sorted(files) == ["base.py", "feat.py"]
+        assert caplog.text == ""
+
+
+class TestScanAllOverrideIsLoud:
+    """`scan_all` outranks `changed_files`, and used to do it silently.
+
+    `scan_all` can come from a Socket dashboard config or a shared workflow
+    template, so the person who asked for diff-only scoping is often not the
+    person who set it. Discarding their request without a word is what makes
+    the action look like it ignores `changed_files` entirely.
+    """
+
+    def test_scan_all_still_wins(self, tmp_path):
+        (tmp_path / "a.py").write_text("x = 1")
+        cfg = _make_config(tmp_path, scan_all=True, changed_files=["a.py"])
+        assert cfg.get_scan_targets() == [str(tmp_path)]
+
+    def test_scan_all_warns_when_it_discards_a_scope_request(self, tmp_path, caplog):
+        (tmp_path / "a.py").write_text("x = 1")
+        cfg = _make_config(tmp_path, scan_all=True, changed_files=["a.py"])
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            cfg.get_scan_targets()
+
+        assert "scan_all is enabled" in caplog.text
+        assert "changed-files scope" in caplog.text
+
+    def test_scan_all_warns_for_a_scope_that_resolved_to_nothing(self, tmp_path, caplog):
+        """The request was made even though it produced no files."""
+        cfg = _make_config(
+            tmp_path, scan_all=True, changed_files=[], changed_files_scope_requested=True
+        )
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            cfg.get_scan_targets()
+
+        assert "scan_all is enabled" in caplog.text
+
+    def test_scan_all_alone_does_not_warn(self, tmp_path, caplog):
+        cfg = _make_config(tmp_path, scan_all=True)
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            assert cfg.get_scan_targets() == [str(tmp_path)]
+
+        assert "scan_all is enabled" not in caplog.text
+
+
+class TestResolveChangedFilesRequest:
+    """The single resolver every config path now goes through."""
+
+    def test_commit_hash_request(self, pr_repo):
+        head = _git(pr_repo, "rev-parse", "HEAD").stdout.strip()
+        files = resolve_changed_files_request(head, str(pr_repo))
+        # commit/current-commit list every path in the commit, deletions
+        # included; the deleted path is dropped when targets are resolved.
+        assert sorted(files) == ["base.py", "feat.py", "old.py"]
+
+    def test_current_commit_request(self, pr_repo):
+        files = resolve_changed_files_request("current-commit", str(pr_repo))
+        assert sorted(files) == ["base.py", "feat.py", "old.py"]
+
+    def test_current_commit_drops_deleted_paths_from_targets(self, pr_repo):
+        cfg = _make_config(pr_repo, changed_files="current-commit")
+        targets = [os.path.basename(t) for t in cfg.get_scan_targets()]
+        assert sorted(targets) == ["base.py", "feat.py"]
+
+    def test_explicit_list_request_does_not_touch_git(self, tmp_path):
+        assert resolve_changed_files_request("a.py, b.py ", str(tmp_path)) == ["a.py", "b.py"]
+
+    def test_blank_request_returns_empty(self, tmp_path):
+        assert resolve_changed_files_request("   ", str(tmp_path)) == []
+
+
+class TestConnectorsHonorTheResolvedScope:
+    """Connectors derive their own changed-file list when the config has none.
+
+    That fallback must not fire when the user explicitly asked for a scope and
+    it resolved to nothing. Substituting "whatever is staged" for "what the PR
+    changed" scans a different set of files than the one that was requested.
+    """
+
+    def _scanner(self, tmp_path, changed_files, scope_requested):
+        from socket_basics.core.connector.trufflehog import TruffleHogScanner
+
+        values = {
+            "changed_files": changed_files,
+            "changed_files_scope_requested": scope_requested,
+            "trufflehog_exclude_dir": "",
+            "trufflehog_show_unverified": False,
+        }
+        config = SimpleNamespace(workspace=tmp_path, _config=values)
+        config.get = lambda key, default=None: values.get(key, default)
+        config.get_scan_targets = lambda: []
+        scanner = TruffleHogScanner.__new__(TruffleHogScanner)
+        scanner.config = config
+        scanner.is_enabled = lambda: True
+        return scanner
+
+    def test_scope_resolved_to_nothing_is_not_replaced_by_staged(self, pr_repo, monkeypatch):
+        (pr_repo / "staged_secret.py").write_text("token = 'abc'")
+        _git(pr_repo, "add", "staged_secret.py")
+
+        called = []
+        monkeypatch.setattr(
+            "socket_basics.core.config._detect_git_changed_files",
+            lambda *a, **k: called.append(k.get("mode")) or ["staged_secret.py"],
+        )
+
+        scanner = self._scanner(pr_repo, changed_files=[], scope_requested=True)
+        assert scanner.scan() == {}
+        assert called == []
+
+    def test_staged_fallback_still_runs_when_no_scope_was_requested(self, pr_repo, monkeypatch):
+        called = []
+        monkeypatch.setattr(
+            "socket_basics.core.config._detect_git_changed_files",
+            lambda *a, **k: called.append(k.get("mode")) or [],
+        )
+
+        scanner = self._scanner(pr_repo, changed_files=[], scope_requested=False)
+        scanner.scan()
+        assert called == ["staged"]

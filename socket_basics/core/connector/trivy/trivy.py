@@ -141,7 +141,7 @@ class TrivyScanner(BaseConnector):
 
         # Try to detect changed Dockerfiles even if none explicitly configured
         changed_files = self.config.get('changed_files', []) if hasattr(self.config, '_config') else []
-        if not changed_files:
+        if not changed_files and not self._changed_files_scope_requested():
             try:
                 from socket_basics.core.config import _detect_git_changed_files
                 changed_files = _detect_git_changed_files(str(self.config.workspace), mode='staged')
@@ -170,7 +170,7 @@ class TrivyScanner(BaseConnector):
         # If changed_files is provided, prefer scanning only changed Dockerfiles
         changed_files = self.config.get('changed_files', []) if hasattr(self.config, '_config') else []
         # Fallback: attempt to detect staged changed files if none present
-        if not changed_files:
+        if not changed_files and not self._changed_files_scope_requested():
             try:
                 # import helper from config module
                 from socket_basics.core.config import _detect_git_changed_files
@@ -322,7 +322,7 @@ class TrivyScanner(BaseConnector):
         
         # Check for changed files to restrict scanning
         changed_files = self.config.get('changed_files', []) if hasattr(self.config, '_config') else []
-        if not changed_files:
+        if not changed_files and not self._changed_files_scope_requested():
             try:
                 from socket_basics.core.config import _detect_git_changed_files
                 changed_files = _detect_git_changed_files(str(self.config.workspace), mode='staged')

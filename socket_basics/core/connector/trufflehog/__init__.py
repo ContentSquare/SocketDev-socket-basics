@@ -223,9 +223,12 @@ class TruffleHogScanner(BaseConnector):
         exclude_file_path = None
         exclude_patterns: List[str] = []
         try:
-            # Prefer explicit changed_files, fallback to git staged
+            # Prefer explicit changed_files, fallback to git staged. When the
+            # user asked for a scope and it resolved to nothing (a delete-only
+            # PR, or a diff base that could not be worked out), do NOT quietly
+            # substitute a different scope -- honor the empty result and skip.
             changed_files = self.config.get('changed_files', []) if hasattr(self.config, '_config') else []
-            if not changed_files:
+            if not changed_files and not self._changed_files_scope_requested():
                 try:
                     from socket_basics.core.config import _detect_git_changed_files
                     changed_files = _detect_git_changed_files(str(self.config.workspace), mode='staged')

@@ -109,16 +109,41 @@ changed files only, the way Socket SCA Pull Request alerts behave. Accepts:
 
 - a comma-separated file list (e.g. `src/app.py,src/utils.js`)
 - a commit hash — files changed in that commit
-- `auto` — the PR base-ref diff when running in a PR CI context
-  (`GITHUB_BASE_REF` is set), otherwise staged (`--cached`) changes
-- `pr` — diff against the PR base branch (`GITHUB_BASE_REF`)
+- `auto` — the PR base diff when a pull request base can be found, otherwise
+  staged (`--cached`) changes
+- `pr` — the PR base diff, and nothing else
 - `current-commit` — files in the `HEAD` commit
+
+The same value works from the CLI (`--changed-files`), the `changed_files`
+action input, the `INPUT_CHANGED_FILES` environment variable, a `--config` JSON
+file, and a Socket dashboard config. Whichever way it arrives, it is resolved
+against git once, in the same place.
 
 Deletions are excluded from PR/`auto`/`pr` diffs so removed paths never become
 scan targets. When the diff resolves to no existing files (e.g. a delete-only
 PR), the scanners are skipped rather than falling back to scanning the whole
 repository. For PR/`auto`/`pr` modes, check out with full history (e.g.
 `actions/checkout` with `fetch-depth: 0`) so the base branch is available.
+
+**Finding the pull request base.** `auto` and `pr` try, in order:
+
+1. `GITHUB_BASE_REF` — set by GitHub on `pull_request` and
+   `pull_request_target` triggers only
+2. `pull_request.base.sha` from the event payload at `GITHUB_EVENT_PATH` — an
+   exact commit, so it works even when no remote-tracking branch exists
+3. `pull_request.base.ref` from the same payload
+
+Each candidate is tried as `origin/<ref>` and then bare. If none resolves, the
+run logs a warning naming what it tried and why (shallow checkout, workspace is
+not a git repository, git refused to read the repository, no PR base at all) and
+the scanners are skipped. **A scope request that cannot be honored is never
+turned into a whole-repository scan, and it is never silent.**
+
+**`scan_all` outranks `changed_files`.** If `scan_all` is set — from
+`INPUT_SCAN_ALL`, a JSON config, or a Socket dashboard config — the whole
+workspace is scanned and the changed-files scope is discarded. The run logs a
+warning saying so, because `scan_all` often comes from a different place than
+the workflow that asked for diff-only scoping.
 
 **Example:**
 ```bash

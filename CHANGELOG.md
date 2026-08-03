@@ -8,6 +8,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `changed_files` is now honored no matter which way the config is built. It was
+  only resolved inside `create_config_from_args()`, so `INPUT_CHANGED_FILES` was
+  missing from the environment loader entirely (unlike `INPUT_SCAN_ALL` and
+  `INPUT_SCAN_FILES`) and any config built another way scanned the whole
+  repository. All sources now go through one resolver.
+- A raw `changed_files` string from a `--config` JSON file or a Socket dashboard
+  config is now resolved against git. `"auto"` used to be stored verbatim and
+  then iterated character by character, looking for files named `a`, `u`, `t`
+  and `o`, which scoped the scan to nothing.
+- `scan_all` still overrides `changed_files`, but now logs a warning naming the
+  scope it discarded. It can come from a Socket dashboard config rather than the
+  workflow, so discarding the request silently made diff-only mode look broken.
+- Pull request base resolution now falls back to `pull_request.base.sha` and
+  `pull_request.base.ref` from the GitHub event payload when `GITHUB_BASE_REF`
+  is unset, which is the case on any trigger other than `pull_request` and
+  `pull_request_target`.
+- A scope request that cannot be honored now says why. Shallow checkouts
+  (naming `fetch-depth: 0`), a workspace that is not a git repository, git
+  refusing to read the repository (container ownership mismatch), and a missing
+  PR base each log a specific warning, and a scope that resolves to zero files
+  warns that the scanners are being skipped. All of these previously returned an
+  empty list in complete silence.
+- TruffleHog and Trivy no longer substitute their own staged-file scope when an
+  explicit `changed_files` request resolved to nothing.
+
 ## [2.2.1] - 2026-07-30
 
 ### Fixed
