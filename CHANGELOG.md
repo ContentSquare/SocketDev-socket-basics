@@ -26,6 +26,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   values (`'false'`, `'0'`, `'no'`, `'off'`) as well as booleans. A Socket
   dashboard config that supplied a flag as a string previously read as enabled,
   because `bool("false")` is `True`.
+- A blank PR comment flag now falls back to its documented default instead of
+  reading as off. The environment loader compared the raw value against the
+  single string `'true'`, so an action input forwarded from an unset workflow
+  variable arrived as `''` and disabled the flag, and `'1'`, `'yes'` and `'on'`
+  did not enable it. All the spellings the flags document now work from the
+  environment, a JSON config and a Socket dashboard config alike.
 
 ## [2.2.1] - 2026-07-30
 

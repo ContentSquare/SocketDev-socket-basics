@@ -14,6 +14,10 @@ import re
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 
+# coerce_bool lives in the config layer so the environment loader, a Socket
+# dashboard config and these flags all read a string the same way.
+from socket_basics.core.config import coerce_bool
+
 
 # ============================================================================
 # Severity Constants (shared across all scanners)
@@ -84,34 +88,6 @@ def wrap_pr_comment_section(
 # ============================================================================
 # Configuration Helper
 # ============================================================================
-
-def coerce_bool(value: Any, default: bool) -> bool:
-    """Coerce a config value to a bool, tolerating the string forms.
-
-    Flags reach us as real booleans from the environment loader, but a Socket
-    dashboard config can supply them as strings. ``bool("false")`` is ``True``,
-    so a plain cast would silently turn a disabled flag back on.
-
-    Args:
-        value: Raw config value (bool, string, None, ...)
-        default: Value to use when nothing usable was provided
-
-    Returns:
-        The resolved boolean
-    """
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in ('true', '1', 'yes', 'on'):
-            return True
-        if normalized in ('false', '0', 'no', 'off'):
-            return False
-        return default
-    return bool(value)
-
 
 def get_feature_flags(config) -> Dict[str, Any]:
     """Extract PR comment feature flags from config object.

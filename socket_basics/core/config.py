@@ -14,6 +14,38 @@ from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
+TRUE_STRINGS = ('true', '1', 'yes', 'on')
+FALSE_STRINGS = ('false', '0', 'no', 'off')
+
+
+def coerce_bool(value: Any, default: bool) -> bool:
+    """Coerce a config value to a bool, tolerating the string forms.
+
+    Every layer that carries a flag delivers it differently: the environment
+    loader sees strings because GitHub Action inputs are always strings, a
+    Socket dashboard config can send either, and a JSON config sends real
+    booleans. ``bool("false")`` is ``True``, so a plain cast turns a disabled
+    flag back on.
+
+    A value that says nothing -- ``None``, an empty string, or a word that is
+    neither true nor false -- resolves to ``default`` rather than to ``False``.
+    An action input forwarded from an unset workflow variable arrives as an
+    empty string, and reading that as "off" silently disables a flag that
+    nobody asked to disable.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in TRUE_STRINGS:
+            return True
+        if normalized in FALSE_STRINGS:
+            return False
+        return default
+    return bool(value)
+
 
 def _normalize_path_parts(path_value: str | None) -> List[str] | None:
     """Normalize a path-like string into comparable POSIX-style path segments."""
@@ -812,7 +844,7 @@ def load_config_from_env() -> Dict[str, Any]:
                         env_value = os.getenv(env_var)
                         if env_value is not None:
                             if p_type == 'bool':
-                                config[p_name] = env_value.lower() == 'true'
+                                config[p_name] = coerce_bool(env_value, bool(default_value))
                             elif p_type == 'int':
                                 try:
                                     config[p_name] = int(env_value)

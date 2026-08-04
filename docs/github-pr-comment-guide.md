@@ -376,6 +376,18 @@ When a later Socket Basics run no longer has active findings for a previously-re
 | `pr_label_medium` | `"security: medium"` | string | Label name for medium findings |
 | `pr_label_low` | `"security: low"` | string | Label name for low findings |
 
+### How boolean options are read
+
+Every boolean above accepts `true`, `1`, `yes` and `on` for on, and `false`,
+`0`, `no` and `off` for off, in any capitalization, whether it arrives as a
+GitHub Action input, an environment variable, a `--config` JSON file, or a
+Socket dashboard config.
+
+A value that says nothing — blank, whitespace, or a word that is neither — falls
+back to the default in the table. This matters for `pr_comment_enabled`: passing
+it a workflow variable that turns out to be unset gives the action an empty
+string, and that leaves the comment on rather than silently switching it off.
+
 ### Configuration Methods
 
 **1. GitHub Actions (Recommended)**

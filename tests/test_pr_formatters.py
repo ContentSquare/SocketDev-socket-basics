@@ -425,3 +425,63 @@ class TestFeatureFlagCoercion:
         flags = get_feature_flags(None)
         assert flags["collapse_all"] is False
         assert flags["collapse_non_critical"] is True
+
+
+class TestActionInputCoercion:
+    """GitHub Action inputs are always strings, and blank means "unset".
+
+    An input forwarded from an unset workflow variable arrives as an empty
+    string. Reading that as "off" would silently suppress the PR comment for a
+    workflow that never asked to suppress it, so a value that says nothing has
+    to fall back to the documented default.
+    """
+
+    def _load(self, monkeypatch, **env):
+        from socket_basics.core.config import load_config_from_env
+        for name in (
+            "INPUT_PR_COMMENT_ENABLED",
+            "INPUT_PR_COMMENT_COLLAPSE_ALL",
+            "INPUT_PR_LABELS_ENABLED",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        return load_config_from_env()
+
+    def test_comment_stays_enabled_when_the_input_is_unset(self, monkeypatch):
+        assert self._load(monkeypatch).get("pr_comment_enabled") is True
+
+    def test_comment_stays_enabled_for_a_blank_input(self, monkeypatch):
+        config = self._load(monkeypatch, INPUT_PR_COMMENT_ENABLED="")
+        assert config.get("pr_comment_enabled") is True
+
+    def test_comment_stays_enabled_for_a_whitespace_input(self, monkeypatch):
+        config = self._load(monkeypatch, INPUT_PR_COMMENT_ENABLED="   ")
+        assert config.get("pr_comment_enabled") is True
+
+    def test_comment_stays_enabled_for_an_unrecognized_input(self, monkeypatch):
+        config = self._load(monkeypatch, INPUT_PR_COMMENT_ENABLED="maybe")
+        assert config.get("pr_comment_enabled") is True
+
+    @pytest.mark.parametrize("value", ["false", "False", "FALSE", "0", "no", "off"])
+    def test_comment_is_disabled_by_every_false_spelling(self, monkeypatch, value):
+        config = self._load(monkeypatch, INPUT_PR_COMMENT_ENABLED=value)
+        assert config.get("pr_comment_enabled") is False
+
+    @pytest.mark.parametrize("value", ["true", "True", "TRUE", "1", "yes", "on"])
+    def test_comment_is_enabled_by_every_true_spelling(self, monkeypatch, value):
+        config = self._load(monkeypatch, INPUT_PR_COMMENT_ENABLED=value)
+        assert config.get("pr_comment_enabled") is True
+
+    def test_collapse_all_stays_off_for_a_blank_input(self, monkeypatch):
+        """A blank input falls back to the default, which here is off."""
+        config = self._load(monkeypatch, INPUT_PR_COMMENT_COLLAPSE_ALL="")
+        assert config.get("pr_comment_collapse_all") is False
+
+    def test_collapse_all_is_enabled_by_a_string_true(self, monkeypatch):
+        config = self._load(monkeypatch, INPUT_PR_COMMENT_COLLAPSE_ALL="true")
+        assert config.get("pr_comment_collapse_all") is True
+
+    def test_labels_stay_enabled_for_a_blank_input(self, monkeypatch):
+        config = self._load(monkeypatch, INPUT_PR_LABELS_ENABLED="")
+        assert config.get("pr_labels_enabled") is True
