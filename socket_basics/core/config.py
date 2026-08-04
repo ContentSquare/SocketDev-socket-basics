@@ -1793,6 +1793,35 @@ def _event_is_comment_on_pull_request() -> bool:
     return isinstance(issue, dict) and isinstance(issue.get('pull_request'), dict)
 
 
+def _git_command_for(workspace: Path) -> List[str]:
+    """The ``git`` command to use for reading ``workspace``.
+
+    This action ships as a Docker container action, so the scan runs as root
+    inside the container over a workspace that belongs to the runner user. That
+    ownership mismatch is exactly what git refuses with "detected dubious
+    ownership", and it makes every diff fail no matter how the workflow is
+    written -- the same symptom as a PR that changed nothing.
+
+    Telling the user to run ``git config --global --add safe.directory`` cannot
+    fix it either, because that writes the *runner's* git config and the
+    container has its own. So declare the trust here instead, for the one
+    directory the workflow already asked us to scan and for nothing else. When
+    ownership matches, this changes nothing.
+    """
+    trusted = [str(workspace)]
+    try:
+        resolved = str(workspace.resolve())
+        if resolved not in trusted:
+            trusted.append(resolved)
+    except OSError:
+        pass
+
+    command = ['git']
+    for path in trusted:
+        command += ['-c', f'safe.directory={path}']
+    return command
+
+
 def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit: str | None = None, base_ref: str | None = None) -> List[str]:
     """Detect changed files in a git repository.
 
@@ -1847,13 +1876,15 @@ def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit:
         try:
             os.chdir(str(ws))
 
+            git = _git_command_for(ws)
+
             def _split(out: str) -> List[str]:
                 return [line.strip() for line in out.splitlines() if line.strip()]
 
             def _is_shallow() -> bool:
                 try:
                     out = check_output(
-                        ['git', 'rev-parse', '--is-shallow-repository'],
+                        [*git, 'rev-parse', '--is-shallow-repository'],
                         text=True, stderr=subprocess.DEVNULL,
                     )
                     return out.strip() == 'true'
@@ -1866,10 +1897,12 @@ def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit:
                 A container action runs as root over a workspace owned by the
                 runner user, which git refuses with "detected dubious
                 ownership" -- an error that otherwise looks exactly like an
-                empty diff.
+                empty diff. ``_git_command_for`` already trusts the workspace,
+                so reaching this check means something else is wrong with the
+                checkout.
                 """
                 try:
-                    check_output(['git', 'rev-parse', '--git-dir'], text=True, stderr=subprocess.DEVNULL)
+                    check_output([*git, 'rev-parse', '--git-dir'], text=True, stderr=subprocess.DEVNULL)
                     return True
                 except Exception:
                     return False
@@ -1889,7 +1922,7 @@ def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit:
                         tried.append(candidate)
                         try:
                             out = check_output(
-                                ['git', 'diff', '--name-only', '--diff-filter=ACMR', f'{candidate}...HEAD'],
+                                [*git, 'diff', '--name-only', '--diff-filter=ACMR', f'{candidate}...HEAD'],
                                 text=True, stderr=subprocess.DEVNULL,
                             )
                             log.info("Resolved PR diff base to '%s'", candidate)
@@ -1904,11 +1937,12 @@ def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit:
                 """Explain a failed base resolution instead of returning [] quietly."""
                 if not _git_is_usable():
                     log.warning(
-                        "Cannot scope the scan to changed files: git refused to read %s. "
-                        "This is usually a repository-ownership mismatch inside a container "
-                        "('detected dubious ownership'). Run `git config --global --add "
-                        "safe.directory %s` before the scan step.",
-                        str(ws), str(ws),
+                        "Cannot scope the scan to changed files: git refused to read %s even "
+                        "though the scan already trusts that directory, so this is not the "
+                        "usual container ownership mismatch. The checkout is probably damaged "
+                        "or incomplete -- re-run actions/checkout, or pass an explicit file "
+                        "list to changed_files.",
+                        str(ws),
                     )
                     return
                 if not refs:
@@ -1953,7 +1987,7 @@ def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit:
                     return pr_files
                 _warn_no_base(refs)
                 try:
-                    out = check_output(['git', 'diff', '--name-only', '--cached'], text=True, stderr=subprocess.DEVNULL)
+                    out = check_output([*git, 'diff', '--name-only', '--cached'], text=True, stderr=subprocess.DEVNULL)
                 except CalledProcessError:
                     return []
                 staged = _split(out)
@@ -1970,14 +2004,14 @@ def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit:
                 return []
             elif mode == 'staged':
                 # staged but not yet committed
-                out = check_output(['git', 'diff', '--name-only', '--cached'], text=True, stderr=subprocess.DEVNULL)
+                out = check_output([*git, 'diff', '--name-only', '--cached'], text=True, stderr=subprocess.DEVNULL)
                 return _split(out)
             elif mode == 'current-commit':
                 # files that are part of HEAD commit
-                out = check_output(['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], text=True, stderr=subprocess.DEVNULL)
+                out = check_output([*git, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], text=True, stderr=subprocess.DEVNULL)
                 return _split(out)
             elif mode == 'commit' and commit:
-                out = check_output(['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', commit], text=True, stderr=subprocess.DEVNULL)
+                out = check_output([*git, 'diff-tree', '--no-commit-id', '--name-only', '-r', commit], text=True, stderr=subprocess.DEVNULL)
                 return _split(out)
             else:
                 log.warning("Unknown changed-files detection mode '%s'; scoping nothing", mode)

@@ -34,12 +34,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `pull_request`. It cannot cover `issue_comment`, whose payload only has
   `issue.pull_request` (URLs, no base ref or sha), so that trigger now gets a
   warning naming itself and saying how to supply the base instead.
+- Changed-file detection now works inside the action's container. The scan runs
+  as root over a workspace owned by the runner user, which git refuses with
+  `detected dubious ownership`, so every diff failed and `changed_files: 'auto'`
+  or `'pr'` resolved to nothing. Nothing in a workflow could fix it: setting
+  `safe.directory` in a workflow step writes the runner's git config, not the
+  container's. The git reads now trust the workspace they were pointed at, and
+  only that directory.
 - A scope request that cannot be honored now says why. Shallow checkouts
   (naming `fetch-depth: 0`), a workspace that is not a git repository, git
-  refusing to read the repository (container ownership mismatch), and a missing
-  PR base each log a specific warning, and a scope that resolves to zero files
-  warns that the scanners are being skipped. All of these previously returned an
-  empty list in complete silence.
+  refusing to read the repository, and a missing PR base each log a specific
+  warning, and a scope that resolves to zero files warns that the scanners are
+  being skipped. All of these previously returned an empty list in complete
+  silence.
 - TruffleHog and Trivy no longer substitute their own staged-file scope when an
   explicit `changed_files` request resolved to nothing. Trivy's filesystem
   vulnerability scan also stops widening an empty scope back out to the whole

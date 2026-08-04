@@ -341,9 +341,16 @@ everything or nothing:
 | `none of the candidate PR bases (...) could be resolved ... The checkout is shallow` | Add `fetch-depth: 0` to `actions/checkout` |
 | `no pull request base was found` | The trigger is not `pull_request`, so there is no base. Use `changed_files: 'current-commit'` or an explicit file list |
 | `is not a git repository` | Run `actions/checkout` before the scan step |
-| `git refused to read ... detected dubious ownership` | Run `git config --global --add safe.directory "$GITHUB_WORKSPACE"` before the scan step |
-| `scan_all is enabled ... changed-files scope ... is being ignored` | Unset `scan_all` — it can come from a Socket dashboard config, not just your workflow |
+| `git refused to read ... not the usual container ownership mismatch` | The checkout is damaged or incomplete. Re-run `actions/checkout`, or pass an explicit file list |
+| `scan_all and a changed-files scope ... are both set, and they disagree` | Unset `scan_all` — it can come from a Socket dashboard config, not just your workflow |
 | `resolved to zero files. The scanners will be SKIPPED` | The diff found nothing scannable. Combined with a warning above, it tells you the diff failed rather than the PR being empty |
+
+You do not need `git config --global --add safe.directory` for this. The scan
+runs as root inside a container over a workspace owned by the runner user, and
+git normally refuses that with `detected dubious ownership`. The scan trusts the
+workspace it was pointed at, so the diff works without any workflow change —
+and setting `safe.directory` in a workflow step would not have helped anyway,
+because it writes the runner's git config rather than the container's.
 
 ### Where the setting can come from
 

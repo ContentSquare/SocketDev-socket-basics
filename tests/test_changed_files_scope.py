@@ -17,6 +17,7 @@ import pytest
 from socket_basics.core.config import (
     Config,
     _detect_git_changed_files,
+    _git_command_for,
     create_config_from_args,
     resolve_changed_files_request,
 )
@@ -186,8 +187,8 @@ class TestDetectGitChangedFiles:
 
 
 # ===========================================================================
-# SURF-1452: the scope request must reach the file walk from every entry
-# point, and a scope it cannot honor must say so in the log.
+# The scope request must reach the file walk from every entry point, and a
+# scope it cannot honor must say so in the log.
 # ===========================================================================
 
 
@@ -480,6 +481,68 @@ class TestScopeFailuresAreLoud:
 
         assert sorted(files) == ["base.py", "feat.py"]
         assert caplog.text == ""
+
+
+class TestContainerOwnershipMismatch:
+    """The scan runs as root in a container over a runner-owned workspace.
+
+    git refuses that with "detected dubious ownership", which fails every diff
+    and looks exactly like a PR that changed nothing. Nothing in the workflow
+    can fix it -- `git config --global --add safe.directory` before the scan
+    step writes the runner's git config, not the container's -- so the git
+    calls have to trust the workspace themselves.
+
+    `GIT_TEST_ASSUME_DIFFERENT_OWNER` is git's own switch for that state, so
+    these run against real repositories and the real git binary.
+    """
+
+    def test_pr_diff_survives_an_ownership_mismatch(self, pr_repo, monkeypatch):
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+
+        files = _detect_git_changed_files(str(pr_repo), mode="pr", base_ref="main")
+
+        assert sorted(files) == ["base.py", "feat.py"]
+
+    def test_auto_scope_survives_an_ownership_mismatch(self, pr_repo, monkeypatch):
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+
+        cfg = _make_config(pr_repo, changed_files="auto")
+
+        assert sorted(cfg.get("changed_files")) == ["base.py", "feat.py"]
+        assert cfg.get_scan_targets() == [str(pr_repo / "base.py"), str(pr_repo / "feat.py")]
+
+    def test_current_commit_survives_an_ownership_mismatch(self, pr_repo, monkeypatch):
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+
+        files = _detect_git_changed_files(str(pr_repo), mode="current-commit")
+
+        assert "feat.py" in files
+
+    def test_ownership_mismatch_no_longer_warns_about_safe_directory(
+        self, pr_repo, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+
+        with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
+            files = _detect_git_changed_files(str(pr_repo), mode="pr")
+
+        assert sorted(files) == ["base.py", "feat.py"]
+        assert caplog.text == ""
+
+    def test_only_the_workspace_is_trusted(self, tmp_path):
+        command = _git_command_for(tmp_path / "workspace")
+
+        assert command[0] == "git"
+        trusted = [
+            value.split("=", 1)[1]
+            for value in command
+            if value.startswith("safe.directory=")
+        ]
+        assert trusted
+        assert all(path.endswith("workspace") for path in trusted)
+        assert "safe.directory=*" not in command
 
 
 class TestScanAllOverrideIsLoud:
