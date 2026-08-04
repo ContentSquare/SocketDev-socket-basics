@@ -1806,6 +1806,27 @@ def _git_can_read(command: List[str], workspace: Path) -> bool:
         return False
 
 
+def _trusting_git_command(workspace: Path) -> List[str]:
+    """A ``git`` command that trusts ``workspace`` and no other directory.
+
+    Both the path as configured and its resolved form are listed, because
+    ``safe.directory`` entries have to be absolute and a workspace can be given
+    as a relative path or reached through a symlink.
+    """
+    paths = [str(workspace)]
+    try:
+        resolved = str(workspace.resolve())
+        if resolved not in paths:
+            paths.append(resolved)
+    except OSError:
+        pass
+
+    command = ['git']
+    for path in paths:
+        command += ['-c', f'safe.directory={path}']
+    return command
+
+
 def _git_command_for(workspace: Path) -> List[str]:
     """The ``git`` command to use for reading ``workspace``.
 
@@ -1829,18 +1850,7 @@ def _git_command_for(workspace: Path) -> List[str]:
     if _git_can_read(plain, workspace):
         return plain
 
-    trusted_paths = [str(workspace)]
-    try:
-        resolved = str(workspace.resolve())
-        if resolved not in trusted_paths:
-            trusted_paths.append(resolved)
-    except OSError:
-        pass
-
-    trusted = ['git']
-    for path in trusted_paths:
-        trusted += ['-c', f'safe.directory={path}']
-
+    trusted = _trusting_git_command(workspace)
     if not _git_can_read(trusted, workspace):
         return plain
 
@@ -1967,11 +1977,12 @@ def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit:
                 """Explain a failed base resolution instead of returning [] quietly."""
                 if not _git_is_usable():
                     log.warning(
-                        "Cannot scope the scan to changed files: git refused to read %s even "
-                        "though the scan already trusts that directory, so this is not the "
-                        "usual container ownership mismatch. The checkout is probably damaged "
-                        "or incomplete -- re-run actions/checkout, or pass an explicit file "
-                        "list to changed_files.",
+                        "Cannot scope the scan to changed files: git refused to read %s. The "
+                        "scan already retried with that directory trusted (git -c "
+                        "safe.directory=...), so this is more than the usual container "
+                        "ownership mismatch -- the checkout is probably damaged or incomplete. "
+                        "Re-run actions/checkout, or pass an explicit file list to "
+                        "changed_files.",
                         str(ws),
                     )
                     return

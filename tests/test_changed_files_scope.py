@@ -18,7 +18,9 @@ import pytest
 from socket_basics.core.config import (
     Config,
     _detect_git_changed_files,
+    _git_can_read,
     _git_command_for,
+    _trusting_git_command,
     create_config_from_args,
     resolve_changed_files_request,
 )
@@ -497,45 +499,53 @@ class TestContainerOwnershipMismatch:
     these run against real repositories and the real git binary.
     """
 
-    def test_pr_diff_survives_an_ownership_mismatch(self, pr_repo, monkeypatch):
-        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+    @pytest.fixture
+    def refusing_git(self, pr_repo, monkeypatch):
+        """``pr_repo`` with git refusing to read it on ownership grounds.
 
-        files = _detect_git_changed_files(str(pr_repo), mode="pr", base_ref="main")
+        Skips rather than passing vacuously where the switch has no effect, so
+        a git that ignores it shows up in the run instead of hiding.
+        """
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+        if _git_can_read(["git"], pr_repo):
+            pytest.skip("this git ignores GIT_TEST_ASSUME_DIFFERENT_OWNER")
+        return pr_repo
+
+    def test_pr_diff_survives_an_ownership_mismatch(self, refusing_git):
+        files = _detect_git_changed_files(str(refusing_git), mode="pr", base_ref="main")
 
         assert sorted(files) == ["base.py", "feat.py"]
 
-    def test_auto_scope_survives_an_ownership_mismatch(self, pr_repo, monkeypatch):
+    def test_auto_scope_survives_an_ownership_mismatch(self, refusing_git, monkeypatch):
         monkeypatch.setenv("GITHUB_BASE_REF", "main")
-        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
 
-        cfg = _make_config(pr_repo, changed_files="auto")
+        cfg = _make_config(refusing_git, changed_files="auto")
 
         assert sorted(cfg.get("changed_files")) == ["base.py", "feat.py"]
-        assert cfg.get_scan_targets() == [str(pr_repo / "base.py"), str(pr_repo / "feat.py")]
+        assert cfg.get_scan_targets() == [
+            str(refusing_git / "base.py"),
+            str(refusing_git / "feat.py"),
+        ]
 
-    def test_current_commit_survives_an_ownership_mismatch(self, pr_repo, monkeypatch):
-        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
-
-        files = _detect_git_changed_files(str(pr_repo), mode="current-commit")
+    def test_current_commit_survives_an_ownership_mismatch(self, refusing_git):
+        files = _detect_git_changed_files(str(refusing_git), mode="current-commit")
 
         assert "feat.py" in files
 
     def test_ownership_mismatch_no_longer_warns_about_safe_directory(
-        self, pr_repo, monkeypatch, caplog
+        self, refusing_git, monkeypatch, caplog
     ):
         monkeypatch.setenv("GITHUB_BASE_REF", "main")
-        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
 
         with caplog.at_level(logging.WARNING, logger="socket_basics.core.config"):
-            files = _detect_git_changed_files(str(pr_repo), mode="pr")
+            files = _detect_git_changed_files(str(refusing_git), mode="pr")
 
         assert sorted(files) == ["base.py", "feat.py"]
         assert caplog.text == ""
 
-    def test_only_the_workspace_is_trusted(self, pr_repo, monkeypatch):
-        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
-
-        command = _git_command_for(pr_repo)
+    def test_only_the_workspace_is_trusted(self, pr_repo):
+        """The trusting command names the workspace, and never a wildcard."""
+        command = _trusting_git_command(pr_repo)
 
         assert command[0] == "git"
         trusted = [
@@ -545,7 +555,22 @@ class TestContainerOwnershipMismatch:
         ]
         assert trusted
         assert all(Path(path).name == pr_repo.name for path in trusted)
+        assert all(Path(path).is_absolute() for path in trusted)
         assert "safe.directory=*" not in command
+
+    def test_a_relative_workspace_is_trusted_by_its_absolute_path(self, pr_repo, tmp_path):
+        """safe.directory entries have to be absolute to match anything."""
+        command = _trusting_git_command(Path(pr_repo.name))
+
+        trusted = [
+            value.split("=", 1)[1]
+            for value in command
+            if value.startswith("safe.directory=")
+        ]
+        assert any(Path(path).is_absolute() for path in trusted)
+
+    def test_refusing_git_gets_the_trusting_command(self, refusing_git):
+        assert _git_command_for(refusing_git) == _trusting_git_command(refusing_git)
 
     def test_nothing_is_trusted_when_git_is_not_refusing(self, pr_repo):
         """safe.directory is a real protection for a plain local run.
