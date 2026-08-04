@@ -10,6 +10,7 @@ import logging
 import os
 import subprocess
 from argparse import Namespace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -531,8 +532,10 @@ class TestContainerOwnershipMismatch:
         assert sorted(files) == ["base.py", "feat.py"]
         assert caplog.text == ""
 
-    def test_only_the_workspace_is_trusted(self, tmp_path):
-        command = _git_command_for(tmp_path / "workspace")
+    def test_only_the_workspace_is_trusted(self, pr_repo, monkeypatch):
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+
+        command = _git_command_for(pr_repo)
 
         assert command[0] == "git"
         trusted = [
@@ -541,8 +544,16 @@ class TestContainerOwnershipMismatch:
             if value.startswith("safe.directory=")
         ]
         assert trusted
-        assert all(path.endswith("workspace") for path in trusted)
+        assert all(Path(path).name == pr_repo.name for path in trusted)
         assert "safe.directory=*" not in command
+
+    def test_nothing_is_trusted_when_git_is_not_refusing(self, pr_repo):
+        """safe.directory is a real protection for a plain local run.
+
+        git never blocks a checkout you own, so relaxing it there would give
+        something up and buy nothing.
+        """
+        assert _git_command_for(pr_repo) == ["git"]
 
 
 class TestScanAllOverrideIsLoud:

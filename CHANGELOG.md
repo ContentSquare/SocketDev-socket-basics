@@ -39,8 +39,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `detected dubious ownership`, so every diff failed and `changed_files: 'auto'`
   or `'pr'` resolved to nothing. Nothing in a workflow could fix it: setting
   `safe.directory` in a workflow step writes the runner's git config, not the
-  container's. The git reads now trust the workspace they were pointed at, and
-  only that directory.
+  container's. When git refuses, the git reads now trust that one workspace
+  directory so the diff can run, and say so in the log. When git is not
+  refusing — any ordinary local run — nothing is relaxed.
 - A scope request that cannot be honored now says why. Shallow checkouts
   (naming `fetch-depth: 0`), a workspace that is not a git repository, git
   refusing to read the repository, and a missing PR base each log a specific

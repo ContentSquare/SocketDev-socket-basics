@@ -347,10 +347,11 @@ everything or nothing:
 
 You do not need `git config --global --add safe.directory` for this. The scan
 runs as root inside a container over a workspace owned by the runner user, and
-git normally refuses that with `detected dubious ownership`. The scan trusts the
-workspace it was pointed at, so the diff works without any workflow change —
-and setting `safe.directory` in a workflow step would not have helped anyway,
-because it writes the runner's git config rather than the container's.
+git normally refuses that with `detected dubious ownership`. When git refuses,
+the scan trusts that one workspace directory so the diff can run, and logs that
+it did — so no workflow change is needed. Setting `safe.directory` in a workflow
+step would not have helped anyway, because it writes the runner's git config
+rather than the container's. When git is not refusing, nothing is relaxed.
 
 ### Where the setting can come from
 

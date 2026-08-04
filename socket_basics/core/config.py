@@ -1793,6 +1793,19 @@ def _event_is_comment_on_pull_request() -> bool:
     return isinstance(issue, dict) and isinstance(issue.get('pull_request'), dict)
 
 
+def _git_can_read(command: List[str], workspace: Path) -> bool:
+    """Will ``command`` read the repository at ``workspace``?"""
+    import subprocess
+    try:
+        subprocess.check_output(
+            [*command, 'rev-parse', '--git-dir'],
+            cwd=str(workspace), text=True, stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _git_command_for(workspace: Path) -> List[str]:
     """The ``git`` command to use for reading ``workspace``.
 
@@ -1804,22 +1817,39 @@ def _git_command_for(workspace: Path) -> List[str]:
 
     Telling the user to run ``git config --global --add safe.directory`` cannot
     fix it either, because that writes the *runner's* git config and the
-    container has its own. So declare the trust here instead, for the one
-    directory the workflow already asked us to scan and for nothing else. When
-    ownership matches, this changes nothing.
+    container has its own. So the trust is declared here, for the one directory
+    we were asked to scan and for nothing else.
+
+    It is only declared when git is actually refusing. ``safe.directory`` guards
+    against picking up a repository config you do not control, and a plain local
+    run over your own checkout is never blocked by it, so relaxing it there
+    would give something up for nothing.
     """
-    trusted = [str(workspace)]
+    plain = ['git']
+    if _git_can_read(plain, workspace):
+        return plain
+
+    trusted_paths = [str(workspace)]
     try:
         resolved = str(workspace.resolve())
-        if resolved not in trusted:
-            trusted.append(resolved)
+        if resolved not in trusted_paths:
+            trusted_paths.append(resolved)
     except OSError:
         pass
 
-    command = ['git']
-    for path in trusted:
-        command += ['-c', f'safe.directory={path}']
-    return command
+    trusted = ['git']
+    for path in trusted_paths:
+        trusted += ['-c', f'safe.directory={path}']
+
+    if not _git_can_read(trusted, workspace):
+        return plain
+
+    logging.getLogger(__name__).info(
+        "git would not read %s on its own, which is the container running as a different "
+        "user than the workspace owner; trusting that one directory so the changed-file "
+        "diff can run", str(workspace),
+    )
+    return trusted
 
 
 def _detect_git_changed_files(workspace_path: str, mode: str = 'staged', commit: str | None = None, base_ref: str | None = None) -> List[str]:
