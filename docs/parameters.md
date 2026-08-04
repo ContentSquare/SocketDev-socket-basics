@@ -162,6 +162,11 @@ workflow and pass it in yourself:
 Otherwise the run warns that it was triggered by a comment on a pull request
 and that it cannot work the base out on its own.
 
+**Socket Tier 1 reachability is not diff-scoped.** It runs `socket scan reach`
+over the whole workspace because reachability needs the full dependency graph,
+so a `changed_files` scope does not narrow it. That is unchanged behavior, and
+the scanners this setting does scope are SAST/OpenGrep, secrets and containers.
+
 **`scan_all` outranks `changed_files` — but only for some scanners.** If
 `scan_all` is set — from `INPUT_SCAN_ALL`, a JSON config, or a Socket dashboard
 config — SAST scans the whole workspace and the changed-files scope is
