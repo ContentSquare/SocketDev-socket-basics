@@ -8,6 +8,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-11-03
+
+Socket Tier 1 argument parsing and a Python dependency refresh. Minor rather
+than patch: the Tier 1 fix changes how existing configuration is interpreted
+and can change which paths or ecosystems a scan covers.
+
+### Upgrade notes
+
+- **Check comma-separated Tier 1 options before upgrading.** Legacy comma
+  separators in `socket_additional_params` are recognized only outside quotes
+  before a hyphen-led option, with optional intervening whitespace.
+  `--view=full,--all` still splits into two options; configurations using a
+  comma between an option and its value, such as
+  `--reach-analysis-timeout,90s`, must use `--reach-analysis-timeout=90s` or
+  `--reach-analysis-timeout 90s` instead. Quote complete values containing a
+  literal comma followed by a hyphen-led word. (#125)
+- Use repeated `--exclude-paths` flags for multiple exclusions, such as
+  `--exclude-paths=tests --exclude-paths=fixtures`. These affect Socket Tier 1
+  manifest discovery and reachability only; other Basics connectors have their
+  own scope settings. (#125)
+
+### Fixed
+- Socket Tier 1 preserves commas inside `socket_additional_params` values
+  instead of turning them into separate CLI arguments. For example,
+  `--reach-ecosystems=npm,pypi` reaches the Socket CLI as one argument. Quoted
+  values containing commas or spaces are also preserved, and malformed shell
+  quoting produces an `Invalid socket_additional_params` connector error. This
+  applies to the CLI option, action input and `SOCKET_ADDITIONAL_PARAMS`. (#125)
+
+### Changed
+- Socket Python CLI 2.11.3 -> 2.11.11 in the heavy and app-tests images.
+- Socket Python SDK (`socketdev`) 3.6.1 -> 3.6.2 in the lockfile. The
+  `socketdev>=3.5.0` requirement for source installs is unchanged.
+
 ## [3.4.1] - 2026-10-21
 
 ### Changed
