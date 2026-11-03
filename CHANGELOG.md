@@ -39,8 +39,9 @@ and can change which paths or ecosystems a scan covers.
 
 ### Changed
 - Socket Python CLI 2.11.3 -> 2.11.11 in the heavy and app-tests images.
-- Socket Python SDK (`socketdev`) 3.6.1 -> 3.6.2 in the lockfile. The
-  `socketdev>=3.5.0` requirement for source installs is unchanged.
+- Socket Python SDK (`socketdev`) 3.6.1 -> 3.6.2 in the lockfile. Source
+  installs now require `socketdev>=3.6.2` so they receive at least the SDK
+  version validated for this release.
 
 ## [3.4.1] - 2026-10-21
 
